@@ -7,6 +7,7 @@
 #include <type_traits>
 #include <sstream>
 
+namespace internal_PAK {
 #if defined(_WIN32)
 #include <windows.h>
 #elif defined(__APPLE__)
@@ -18,85 +19,86 @@
 #include <limits.h>
 #endif
 
-inline std::string get_executable_path() {
+	inline std::string get_executable_path() {
 #if defined(_WIN32)
-	char path[MAX_PATH];
-	DWORD len = GetModuleFileNameA(nullptr, path, MAX_PATH);
-	if (len == 0 || len == MAX_PATH)
-		throw std::runtime_error("Failed to get executable path");
-	return std::string(path);
+		char path[MAX_PATH];
+		DWORD len = GetModuleFileNameA(nullptr, path, MAX_PATH);
+		if (len == 0 || len == MAX_PATH)
+			throw std::runtime_error("Failed to get executable path");
+		return std::string(path);
 
 #elif defined(__APPLE__)
-	char path[PATH_MAX];
-	uint32_t size = sizeof(path);
-	if (_NSGetExecutablePath(path, &size) != 0)
-		throw std::runtime_error("Failed to get executable path");
-	char resolved[PATH_MAX];
-	if (realpath(path, resolved) == nullptr)
-		throw std::runtime_error("Failed to resolve executable path");
-	return std::string(resolved);
+		char path[PATH_MAX];
+		uint32_t size = sizeof(path);
+		if (_NSGetExecutablePath(path, &size) != 0)
+			throw std::runtime_error("Failed to get executable path");
+		char resolved[PATH_MAX];
+		if (realpath(path, resolved) == nullptr)
+			throw std::runtime_error("Failed to resolve executable path");
+		return std::string(resolved);
 
 #elif defined(__linux__)
-	char path[PATH_MAX];
-	ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
-	if (len == -1)
-		throw std::runtime_error("Failed to get executable path");
-	path[len] = '\0';
-	return std::string(path);
+		char path[PATH_MAX];
+		ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
+		if (len == -1)
+			throw std::runtime_error("Failed to get executable path");
+		path[len] = '\0';
+		return std::string(path);
 
 #else
 #error Unsupported platform
 #endif
-}
-
-inline std::string get_executable_dir() {
-	std::string exe = get_executable_path();
-#if defined(_WIN32)
-	const char sep = '\\';
-#else
-	const char sep = '/';
-#endif
-	size_t pos = exe.find_last_of(sep);
-	return (pos != std::string::npos) ? exe.substr(0, pos) : exe;
-}
-
-#if defined(_WIN32)
-constexpr char PATH_SEP = '\\';
-constexpr char ALT_SEP = '/';
-#else
-constexpr char PATH_SEP = '/';
-constexpr char ALT_SEP = '\\';
-#endif
-
-inline std::string sanitize_path(std::string path) {
-	for (auto& ch : path) {
-		if (ch == ALT_SEP)
-			ch = PATH_SEP;
 	}
-	return path;
-}
 
-template<typename T>
-inline void append_path_part(std::string& result, const T& part) {
-	std::string sanitized = sanitize_path(part);
-	if (result.empty()) {
-		result = sanitized;
-		return;
+	inline std::string get_executable_dir() {
+		std::string exe = get_executable_path();
+#if defined(_WIN32)
+		const char sep = '\\';
+#else
+		const char sep = '/';
+#endif
+		size_t pos = exe.find_last_of(sep);
+		return (pos != std::string::npos) ? exe.substr(0, pos) : exe;
 	}
-	if (result.back() != PATH_SEP)
-		result += PATH_SEP;
-	result += sanitized;
-}
 
-template<typename... Args>
-inline std::string path_combine(const Args&... args) {
-	static_assert(sizeof...(args) > 0, "path_combine requires at least one argument");
+#if defined(_WIN32)
+	constexpr char PATH_SEP = '\\';
+	constexpr char ALT_SEP = '/';
+#else
+	constexpr char PATH_SEP = '/';
+	constexpr char ALT_SEP = '\\';
+#endif
 
-	// Runtime check fallback for C++14
-	std::string result;
-	int dummy[] = { 0, (append_path_part(result, std::string(args)), 0)... };
-	(void)dummy;
-	return result;
+	inline std::string sanitize_path(std::string path) {
+		for (auto& ch : path) {
+			if (ch == ALT_SEP)
+				ch = PATH_SEP;
+		}
+		return path;
+	}
+
+	template<typename T>
+	inline void append_path_part(std::string& result, const T& part) {
+		std::string sanitized = sanitize_path(part);
+		if (result.empty()) {
+			result = sanitized;
+			return;
+		}
+		if (result.back() != PATH_SEP)
+			result += PATH_SEP;
+		result += sanitized;
+	}
+
+	template<typename... Args>
+	inline std::string path_combine(const Args&... args) {
+		static_assert(sizeof...(args) > 0, "path_combine requires at least one argument");
+
+		// Runtime check fallback for C++14
+		std::string result;
+		int dummy[] = { 0, (append_path_part(result, std::string(args)), 0)... };
+		(void)dummy;
+		return result;
+	}
 }
 
 namespace PAKLib {
@@ -168,17 +170,17 @@ namespace PAKLib {
 		if (pak_file.sprite_count == 0) {
 			throw std::runtime_error("No sprites found in PAK file: " + filepath);
 		}
-		if(pak_file.sprite_count > 1500) {
+		if (pak_file.sprite_count > 1500) {
 			throw std::runtime_error("Unreasonable number of sprites detected, overflow?: " + filepath);
 		}
 
 		// Read sprite entries
 		pak_file.sprite_entries.resize(pak_file.sprite_count);
 		file.read(reinterpret_cast<char*>(pak_file.sprite_entries.data()), pak_file.sprite_count * sizeof(sprite_entry));
-		if(file.fail()) {
+		if (file.fail()) {
 			throw std::runtime_error("Failed to read sprite entries from PAK file: " + filepath);
 		}
-		if(pak_file.sprite_entries.size() != pak_file.sprite_count) {
+		if (pak_file.sprite_entries.size() != pak_file.sprite_count) {
 			throw std::runtime_error("Mismatch in sprite entries count in PAK file: " + filepath);
 		}
 
@@ -190,7 +192,7 @@ namespace PAKLib {
 			auto& offset = entry.offset;
 			auto& size = entry.size;
 
-			if(file.tellg() != static_cast<std::streampos>(offset)) {
+			if (file.tellg() != static_cast<std::streampos>(offset)) {
 				throw std::runtime_error("Sprite offset mismatch in PAK file, corrupt PAK file?: " + filepath);
 			}
 
@@ -212,10 +214,10 @@ namespace PAKLib {
 			// Read sprite rectangles
 			sprite_obj.sprite_rectangles.resize(rect_count);
 			file.read(reinterpret_cast<char*>(sprite_obj.sprite_rectangles.data()), rect_count * sizeof(sprite_rect));
-			if(file.fail()) {
+			if (file.fail()) {
 				throw std::runtime_error("Failed to read sprite rectangles from PAK file: " + filepath);
 			}
-			if(sprite_obj.sprite_rectangles.size() != rect_count) {
+			if (sprite_obj.sprite_rectangles.size() != rect_count) {
 				throw std::runtime_error("Mismatch in sprite rectangles count in PAK file: " + filepath);
 			}
 
@@ -230,12 +232,12 @@ namespace PAKLib {
 			long newLength = size - (sizeOfSpriteHeader + sizeOfSpriteRectangles) - sizeOfPadding;
 			sprite_obj.image_data.resize(newLength);
 			file.read(reinterpret_cast<char*>(sprite_obj.image_data.data()), newLength);
-			if(file.fail()) {
+			if (file.fail()) {
 				throw std::runtime_error("Failed to read image data from PAK file: " + filepath);
 			}
 		}
 
-		pak_file.pak_file_path = path_combine(get_executable_dir(), filepath);
+		pak_file.pak_file_path = internal_PAK::path_combine(internal_PAK::get_executable_dir(), filepath);
 		return pak_file;
 	}
 
@@ -289,7 +291,7 @@ namespace PAKLib {
 			}
 		}
 
-		pak_file.pak_file_path = path_combine(get_executable_dir(), filepath);
+		pak_file.pak_file_path = internal_PAK::path_combine(internal_PAK::get_executable_dir(), filepath);
 		return pak_file;
 	}
 
@@ -315,7 +317,7 @@ namespace PAKLib {
 		if (sprite_count > 1500) {
 			throw std::runtime_error("Unreasonable number of sprites detected, overflow?: " + filepath);
 		}
-		if(sprite_index >= sprite_count) {
+		if (sprite_index >= sprite_count) {
 			throw std::runtime_error("Sprite index out of bounds in PAK file: " + filepath);
 		}
 
@@ -576,7 +578,7 @@ namespace PAKLib {
 			pak_file.sprites[i] = sprite_obj;
 		}
 
-		pak_file.pak_file_path = path_combine(get_executable_dir(), filepath);
+		pak_file.pak_file_path = internal_PAK::path_combine(internal_PAK::get_executable_dir(), filepath);
 		return pak_file;
 	}
 
@@ -629,7 +631,7 @@ namespace PAKLib {
 			pak_file.sprites[i] = sprite_obj;
 		}
 
-		pak_file.pak_file_path = path_combine(get_executable_dir(), filepath);
+		pak_file.pak_file_path = internal_PAK::path_combine(internal_PAK::get_executable_dir(), filepath);
 		return pak_file;
 	}
 
