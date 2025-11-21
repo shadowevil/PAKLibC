@@ -237,7 +237,7 @@ namespace PAKLib {
 			}
 		}
 
-		pak_file.pak_file_path = internal_PAK::path_combine(internal_PAK::get_executable_dir(), filepath);
+		pak_file.pak_file_path = filepath;
 		return pak_file;
 	}
 
@@ -291,7 +291,7 @@ namespace PAKLib {
 			}
 		}
 
-		pak_file.pak_file_path = internal_PAK::path_combine(internal_PAK::get_executable_dir(), filepath);
+		pak_file.pak_file_path = filepath;
 		return pak_file;
 	}
 
