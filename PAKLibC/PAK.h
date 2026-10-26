@@ -2,104 +2,10 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <iterator>
 #include <stdexcept>
 #include <fstream>
 #include <type_traits>
-#include <sstream>
-
-namespace internal_PAK {
-#if defined(_WIN32)
-#include <windows.h>
-#elif defined(__APPLE__)
-#include <mach-o/dyld.h>
-#include <limits.h>
-#include <unistd.h>
-#elif defined(__linux__)
-#include <unistd.h>
-#include <limits.h>
-#endif
-
-	inline std::string get_executable_path() {
-#if defined(_WIN32)
-		char path[MAX_PATH];
-		DWORD len = GetModuleFileNameA(nullptr, path, MAX_PATH);
-		if (len == 0 || len == MAX_PATH)
-			throw std::runtime_error("Failed to get executable path");
-		return std::string(path);
-
-#elif defined(__APPLE__)
-		char path[PATH_MAX];
-		uint32_t size = sizeof(path);
-		if (_NSGetExecutablePath(path, &size) != 0)
-			throw std::runtime_error("Failed to get executable path");
-		char resolved[PATH_MAX];
-		if (realpath(path, resolved) == nullptr)
-			throw std::runtime_error("Failed to resolve executable path");
-		return std::string(resolved);
-
-#elif defined(__linux__)
-		char path[PATH_MAX];
-		ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
-		if (len == -1)
-			throw std::runtime_error("Failed to get executable path");
-		path[len] = '\0';
-		return std::string(path);
-
-#else
-#error Unsupported platform
-#endif
-	}
-
-	inline std::string get_executable_dir() {
-		std::string exe = get_executable_path();
-#if defined(_WIN32)
-		const char sep = '\\';
-#else
-		const char sep = '/';
-#endif
-		size_t pos = exe.find_last_of(sep);
-		return (pos != std::string::npos) ? exe.substr(0, pos) : exe;
-	}
-
-#if defined(_WIN32)
-	constexpr char PATH_SEP = '\\';
-	constexpr char ALT_SEP = '/';
-#else
-	constexpr char PATH_SEP = '/';
-	constexpr char ALT_SEP = '\\';
-#endif
-
-	inline std::string sanitize_path(std::string path) {
-		for (auto& ch : path) {
-			if (ch == ALT_SEP)
-				ch = PATH_SEP;
-		}
-		return path;
-	}
-
-	template<typename T>
-	inline void append_path_part(std::string& result, const T& part) {
-		std::string sanitized = sanitize_path(part);
-		if (result.empty()) {
-			result = sanitized;
-			return;
-		}
-		if (result.back() != PATH_SEP)
-			result += PATH_SEP;
-		result += sanitized;
-	}
-
-	template<typename... Args>
-	inline std::string path_combine(const Args&... args) {
-		static_assert(sizeof...(args) > 0, "path_combine requires at least one argument");
-
-		// Runtime check fallback for C++14
-		std::string result;
-		int dummy[] = { 0, (append_path_part(result, std::string(args)), 0)... };
-		(void)dummy;
-		return result;
-	}
-}
 
 namespace PAKLib {
 #pragma pack(push, 1)
@@ -131,6 +37,25 @@ namespace PAKLib {
 		sprite_header header{};
 		std::vector<sprite_rect> sprite_rectangles{};
 		std::vector<uint8_t> image_data; // Raw image data (e.g., PNG, JPEG)
+
+		// Authored transparency color key as 0xFFRRGGBB (stored on disk as bytes A RR GG BB).
+		// 0 means none was authored, in which case the key is derived from the first pixel of the sprite sheet.
+		// Alpha only marks the key as set: any value whose alpha is not 0xFF (including legacy 00 RR GG BB)
+		// is treated as unset, so black (FF 00 00 00) stays distinct from none (00 00 00 00).
+		uint32_t get_color_key() const { return color_key; }
+		void set_color_key(uint32_t value) { color_key = (value >> 24) == 0xFF ? value : 0; }
+		void set_color_key(uint8_t r, uint8_t g, uint8_t b) {
+			set_color_key(0xFF000000u | (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | b);
+		}
+		void clear_color_key() { color_key = 0; }
+		bool has_color_key() const { return color_key != 0; }
+
+		uint8_t color_key_r() const { return static_cast<uint8_t>(color_key >> 16); }
+		uint8_t color_key_g() const { return static_cast<uint8_t>(color_key >> 8); }
+		uint8_t color_key_b() const { return static_cast<uint8_t>(color_key); }
+
+	private:
+		uint32_t color_key{ 0 };
 	};
 
 	struct sprite_entry {
@@ -149,8 +74,16 @@ namespace PAKLib {
 
 	constexpr size_t SPRITE_HEADER_SKIP = sizeof(sprite_header);
 	constexpr size_t RECT_COUNT_SIZE = sizeof(uint32_t);
-	constexpr size_t PADDING_SIZE = sizeof(uint32_t);
+	constexpr size_t COLOR_KEY_SIZE = sizeof(uint32_t);
 #pragma pack(pop)
+
+	// Transparency color key, stored as bytes A RR GG BB; returned as 0xAARRGGBB
+	inline uint32_t read_color_key(std::istream& stream) {
+		uint8_t bytes[4]{ 0 };
+		stream.read(reinterpret_cast<char*>(bytes), sizeof(bytes));
+		return (static_cast<uint32_t>(bytes[0]) << 24) | (static_cast<uint32_t>(bytes[1]) << 16) |
+			(static_cast<uint32_t>(bytes[2]) << 8) | static_cast<uint32_t>(bytes[3]);
+	}
 
 	inline static pak loadpak(const std::string& filepath) {
 		auto pak_file = pak{};
@@ -221,15 +154,15 @@ namespace PAKLib {
 				throw std::runtime_error("Mismatch in sprite rectangles count in PAK file: " + filepath);
 			}
 
-			// Skip 4 bytes of padding
-			file.seekg(sizeof(uint32_t), std::ios::cur);
+			// Transparency color key, stored as bytes A RR GG BB (alpha other than FF = none authored)
+			sprite_obj.set_color_key(read_color_key(file));
 
 			// Read image data
 			int sizeOfSpriteHeader = sizeof(sprite_header);
 			int sizeOfRectangleCount = sizeof(uint32_t);
 			int sizeOfSpriteRectangles = (rect_count * sizeof(sprite_rect)) + sizeOfRectangleCount;
-			int sizeOfPadding = sizeof(uint32_t);
-			long newLength = size - (sizeOfSpriteHeader + sizeOfSpriteRectangles) - sizeOfPadding;
+			int sizeOfColorKey = sizeof(uint32_t);
+			long newLength = size - (sizeOfSpriteHeader + sizeOfSpriteRectangles) - sizeOfColorKey;
 			sprite_obj.image_data.resize(newLength);
 			file.read(reinterpret_cast<char*>(sprite_obj.image_data.data()), newLength);
 			if (file.fail()) {
@@ -279,10 +212,11 @@ namespace PAKLib {
 				throw std::runtime_error("Failed to read sprite rectangles from: " + filepath);
 			}
 
-			file.seekg(PADDING_SIZE, std::ios::cur);
+			// Transparency color key, stored as bytes A RR GG BB (alpha other than FF = none authored)
+			sprite_obj.set_color_key(read_color_key(file));
 
 			const long image_byte_size =
-				entry.size - (SPRITE_HEADER_SKIP + (rect_count * sizeof(sprite_rect)) + RECT_COUNT_SIZE + PADDING_SIZE);
+				entry.size - (SPRITE_HEADER_SKIP + (rect_count * sizeof(sprite_rect)) + RECT_COUNT_SIZE + COLOR_KEY_SIZE);
 
 			sprite_obj.image_data.resize(image_byte_size);
 			file.read(reinterpret_cast<char*>(sprite_obj.image_data.data()), image_byte_size);
@@ -360,11 +294,11 @@ namespace PAKLib {
 			throw std::runtime_error("Mismatch in sprite rectangles count in PAK file: " + filepath);
 		}
 
-		// Skip 4 bytes of padding
-		file.seekg(sizeof(uint32_t), std::ios::cur);
+		// Transparency color key, stored as bytes A RR GG BB (alpha other than FF = none authored)
+		sprite_obj.set_color_key(read_color_key(file));
 
 		// Read image data
-		long image_byte_size = entry.size - (sizeof(sprite_header) + ((rect_count * sizeof(sprite_rect)) + sizeof(uint32_t))) - sizeof(uint32_t);
+		long image_byte_size = entry.size - (sizeof(sprite_header) + ((rect_count * sizeof(sprite_rect)) + sizeof(uint32_t))) - COLOR_KEY_SIZE;
 		sprite_obj.image_data.resize(image_byte_size);
 		file.read(reinterpret_cast<char*>(sprite_obj.image_data.data()), image_byte_size);
 		if (file.fail()) {
@@ -402,317 +336,17 @@ namespace PAKLib {
 			throw std::runtime_error("Failed to read sprite rectangles from: " + filepath);
 		}
 
-		file.seekg(PADDING_SIZE, std::ios::cur);
+		// Transparency color key, stored as bytes A RR GG BB (alpha other than FF = none authored)
+		sprite_obj.set_color_key(read_color_key(file));
 
 		const long image_byte_size =
-			entry.size - (SPRITE_HEADER_SKIP + (rect_count * sizeof(sprite_rect)) + RECT_COUNT_SIZE + PADDING_SIZE);
+			entry.size - (SPRITE_HEADER_SKIP + (rect_count * sizeof(sprite_rect)) + RECT_COUNT_SIZE + COLOR_KEY_SIZE);
 
 		sprite_obj.image_data.resize(image_byte_size);
 		file.read(reinterpret_cast<char*>(sprite_obj.image_data.data()), image_byte_size);
 		if (file.fail()) {
 			throw std::runtime_error("Failed to read image data from: " + filepath);
 		}
-
-		return sprite_obj;
-	}
-
-	inline uint8_t rotl8(uint8_t v, unsigned int s) {
-		return static_cast<uint8_t>((v << s) | (v >> (8 - s)));
-	}
-
-	inline uint8_t rotr8(uint8_t v, unsigned int s) {
-		return static_cast<uint8_t>((v >> s) | (v << (8 - s)));
-	}
-
-	inline void decrypt_bytes(std::vector<uint8_t>& data,
-		const std::string& key,
-		size_t start_offset = 0) {
-		if (key.empty())
-			throw std::invalid_argument("Decryption key cannot be empty.");
-		if (data.empty())
-			return;
-
-		const size_t key_len = key.size();
-		for (size_t i = 0; i < data.size(); ++i) {
-			size_t global_index = start_offset + i;
-			uint8_t key_byte = static_cast<uint8_t>(key[global_index % key_len]);
-			uint8_t rot = key_byte % 8;
-			if (rot)
-				data[i] = rotr8(data[i], rot);
-			data[i] ^= key_byte;
-		}
-	}
-
-	inline void encrypt_bytes(std::vector<uint8_t>& data,
-		const std::string& key,
-		size_t start_offset = 0) {
-		if (key.empty())
-			throw std::invalid_argument("Encryption key cannot be empty.");
-		if (data.empty())
-			return;
-
-		const size_t key_len = key.size();
-		for (size_t i = 0; i < data.size(); ++i) {
-			size_t global_index = start_offset + i;
-			uint8_t key_byte = static_cast<uint8_t>(key[global_index % key_len]);
-			data[i] ^= key_byte;
-			uint8_t rot = key_byte % 8;
-			if (rot)
-				data[i] = rotl8(data[i], rot);
-		}
-	}
-
-	inline void encrypt_file(const std::string& input_path,
-		const std::string& output_path,
-		const std::string& key) {
-		if (key.empty())
-			throw std::invalid_argument("Encryption key cannot be empty.");
-
-		std::ifstream in(input_path, std::ios::binary);
-		if (!in.is_open())
-			throw std::runtime_error("Failed to open input file: " + input_path);
-
-		std::vector<uint8_t> data((std::istreambuf_iterator<char>(in)), {});
-		in.close();
-
-		encrypt_bytes(data, key, 0); // start from offset 0
-
-		std::ofstream out(output_path, std::ios::binary);
-		if (!out.is_open())
-			throw std::runtime_error("Failed to open output file: " + output_path);
-
-		out.write(reinterpret_cast<const char*>(data.data()), data.size());
-		out.close();
-	}
-
-	inline void decrypt_file(const std::string& input_path,
-		const std::string& output_path,
-		const std::string& key) {
-		if (key.empty())
-			throw std::invalid_argument("Decryption key cannot be empty.");
-
-		std::ifstream in(input_path, std::ios::binary);
-		if (!in.is_open())
-			throw std::runtime_error("Failed to open input file: " + input_path);
-
-		std::vector<uint8_t> data((std::istreambuf_iterator<char>(in)), {});
-		in.close();
-
-		decrypt_bytes(data, key, 0); // start from offset 0
-
-		std::ofstream out(output_path, std::ios::binary);
-		if (!out.is_open())
-			throw std::runtime_error("Failed to open output file: " + output_path);
-
-		out.write(reinterpret_cast<const char*>(data.data()), data.size());
-		out.close();
-	}
-
-	inline std::vector<uint8_t>& read_and_decrypt_section(std::ifstream& file,
-		size_t offset,
-		size_t size,
-		const std::string& key) {
-		static std::vector<uint8_t> buffer; // persistent buffer
-		buffer.resize(size);                 // grow if needed
-
-		file.seekg(offset, std::ios::beg);
-		file.read(reinterpret_cast<char*>(buffer.data()), size);
-		if (file.fail())
-			throw std::runtime_error("Failed to read encrypted section.");
-
-		decrypt_bytes(buffer, key, offset); // deterministic offset-aware decryption
-		return buffer;                      // reuse, avoid reallocation
-	}
-
-	inline static pak loadpak_encrypted(const std::string& filepath, const std::string& key) {
-		pak pak_file{};
-		std::ifstream file(filepath, std::ios::binary);
-		if (!file.is_open()) {
-			throw std::runtime_error("Failed to open encrypted PAK file: " + filepath);
-		}
-
-		// decrypt header + count
-		auto header_buf = read_and_decrypt_section(file, 0, sizeof(file_header) + sizeof(uint32_t), key);
-		std::memcpy(&pak_file.header, header_buf.data(), sizeof(file_header));
-
-		if (std::string(pak_file.header.signature, file_header_size) != file_header_signature)
-			throw std::runtime_error("Invalid encrypted PAK header: " + filepath);
-
-		std::memcpy(&pak_file.sprite_count, header_buf.data() + sizeof(file_header), sizeof(uint32_t));
-		if (pak_file.sprite_count == 0 || pak_file.sprite_count > 1500)
-			throw std::runtime_error("Invalid sprite count in encrypted file: " + filepath);
-
-		// decrypt sprite entries
-		auto entries_buf = read_and_decrypt_section(file, sizeof(file_header) + sizeof(uint32_t),
-			pak_file.sprite_count * sizeof(sprite_entry), key);
-
-		pak_file.sprite_entries.resize(pak_file.sprite_count);
-		std::memcpy(pak_file.sprite_entries.data(), entries_buf.data(), entries_buf.size());
-
-		pak_file.sprites.resize(pak_file.sprite_count);
-		for (size_t i = 0; i < pak_file.sprite_count; ++i) {
-			const auto& entry = pak_file.sprite_entries[i];
-			auto sprite_data = read_and_decrypt_section(file, entry.offset, entry.size, key);
-
-			std::istringstream sprite_stream(std::string(reinterpret_cast<char*>(sprite_data.data()), sprite_data.size()),
-				std::ios::binary);
-
-			sprite sprite_obj{};
-			sprite_stream.read(reinterpret_cast<char*>(&sprite_obj.header), sizeof(sprite_header));
-			uint32_t rect_count = 0;
-			sprite_stream.read(reinterpret_cast<char*>(&rect_count), sizeof(uint32_t));
-
-			if (rect_count == 0 || rect_count > 1000)
-				throw std::runtime_error("Invalid rect count in encrypted PAK: " + filepath);
-
-			sprite_obj.sprite_rectangles.resize(rect_count);
-			sprite_stream.read(reinterpret_cast<char*>(sprite_obj.sprite_rectangles.data()), rect_count * sizeof(sprite_rect));
-
-			sprite_stream.seekg(PADDING_SIZE, std::ios::cur);
-
-			const long image_size = entry.size -
-				(sizeof(sprite_header) + (rect_count * sizeof(sprite_rect)) + RECT_COUNT_SIZE + PADDING_SIZE);
-			sprite_obj.image_data.resize(image_size);
-			sprite_stream.read(reinterpret_cast<char*>(sprite_obj.image_data.data()), image_size);
-
-			pak_file.sprites[i] = sprite_obj;
-		}
-
-		pak_file.pak_file_path = internal_PAK::path_combine(internal_PAK::get_executable_dir(), filepath);
-		return pak_file;
-	}
-
-	inline static pak loadpak_fast_encrypted(const std::string& filepath, const std::string& key) {
-		pak pak_file{};
-		std::ifstream file(filepath, std::ios::binary);
-		if (!file.is_open()) {
-			throw std::runtime_error("Failed to open encrypted PAK file: " + filepath);
-		}
-
-		// decrypt header and entries
-		auto header_buf = read_and_decrypt_section(file, 0, sizeof(file_header) + sizeof(uint32_t), key);
-		std::memcpy(&pak_file.sprite_count, header_buf.data() + sizeof(file_header), sizeof(uint32_t));
-
-		if (pak_file.sprite_count == 0 || pak_file.sprite_count > 1500)
-			throw std::runtime_error("Invalid sprite count in encrypted PAK: " + filepath);
-
-		auto entries_buf = read_and_decrypt_section(file, sizeof(file_header) + sizeof(uint32_t),
-			pak_file.sprite_count * sizeof(sprite_entry), key);
-
-		pak_file.sprite_entries.resize(pak_file.sprite_count);
-		std::memcpy(pak_file.sprite_entries.data(), entries_buf.data(), entries_buf.size());
-
-		pak_file.sprites.resize(pak_file.sprite_count);
-		for (size_t i = 0; i < pak_file.sprite_count; ++i) {
-			const auto& entry = pak_file.sprite_entries[i];
-			auto sprite_data = read_and_decrypt_section(file, entry.offset, entry.size, key);
-
-			std::istringstream ss(std::string(reinterpret_cast<char*>(sprite_data.data()), sprite_data.size()),
-				std::ios::binary);
-
-			sprite sprite_obj{};
-			ss.seekg(SPRITE_HEADER_SKIP, std::ios::beg);
-
-			uint32_t rect_count = 0;
-			ss.read(reinterpret_cast<char*>(&rect_count), sizeof(uint32_t));
-			if (rect_count == 0 || rect_count > 1000)
-				throw std::runtime_error("Invalid rect count in encrypted fast load.");
-
-			sprite_obj.sprite_rectangles.resize(rect_count);
-			ss.read(reinterpret_cast<char*>(sprite_obj.sprite_rectangles.data()), rect_count * sizeof(sprite_rect));
-
-			ss.seekg(PADDING_SIZE, std::ios::cur);
-			const long image_size = entry.size -
-				(SPRITE_HEADER_SKIP + (rect_count * sizeof(sprite_rect)) + RECT_COUNT_SIZE + PADDING_SIZE);
-
-			sprite_obj.image_data.resize(image_size);
-			ss.read(reinterpret_cast<char*>(sprite_obj.image_data.data()), image_size);
-
-			pak_file.sprites[i] = sprite_obj;
-		}
-
-		pak_file.pak_file_path = internal_PAK::path_combine(internal_PAK::get_executable_dir(), filepath);
-		return pak_file;
-	}
-
-	inline static sprite get_sprite_encrypted(const std::string& filepath, size_t sprite_index, const std::string& key) {
-		std::ifstream file(filepath, std::ios::binary);
-		if (!file.is_open())
-			throw std::runtime_error("Failed to open encrypted PAK file: " + filepath);
-
-		// decrypt header + entries to locate sprite
-		auto header_buf = read_and_decrypt_section(file, 0, sizeof(file_header) + sizeof(uint32_t), key);
-		uint32_t sprite_count = 0;
-		std::memcpy(&sprite_count, header_buf.data() + sizeof(file_header), sizeof(uint32_t));
-
-		if (sprite_count == 0 || sprite_index >= sprite_count)
-			throw std::runtime_error("Invalid sprite index in encrypted PAK.");
-
-		auto entries_buf = read_and_decrypt_section(file, sizeof(file_header) + sizeof(uint32_t),
-			sprite_count * sizeof(sprite_entry), key);
-
-		std::vector<sprite_entry> entries(sprite_count);
-		std::memcpy(entries.data(), entries_buf.data(), entries_buf.size());
-
-		const auto& entry = entries[sprite_index];
-		auto sprite_data = read_and_decrypt_section(file, entry.offset, entry.size, key);
-
-		std::istringstream ss(std::string(reinterpret_cast<char*>(sprite_data.data()), sprite_data.size()), std::ios::binary);
-		sprite sprite_obj{};
-		ss.read(reinterpret_cast<char*>(&sprite_obj.header), sizeof(sprite_header));
-
-		uint32_t rect_count = 0;
-		ss.read(reinterpret_cast<char*>(&rect_count), sizeof(uint32_t));
-
-		sprite_obj.sprite_rectangles.resize(rect_count);
-		ss.read(reinterpret_cast<char*>(sprite_obj.sprite_rectangles.data()), rect_count * sizeof(sprite_rect));
-		ss.seekg(PADDING_SIZE, std::ios::cur);
-
-		const long image_size = entry.size -
-			(sizeof(sprite_header) + (rect_count * sizeof(sprite_rect)) + RECT_COUNT_SIZE + PADDING_SIZE);
-		sprite_obj.image_data.resize(image_size);
-		ss.read(reinterpret_cast<char*>(sprite_obj.image_data.data()), image_size);
-
-		return sprite_obj;
-	}
-
-	inline static sprite get_sprite_fast_encrypted(const std::string& filepath, size_t sprite_index, const std::string& key) {
-		std::ifstream file(filepath, std::ios::binary);
-		if (!file.is_open())
-			throw std::runtime_error("Failed to open encrypted PAK file: " + filepath);
-
-		auto header_buf = read_and_decrypt_section(file, 0, sizeof(file_header) + sizeof(uint32_t), key);
-		uint32_t sprite_count = 0;
-		std::memcpy(&sprite_count, header_buf.data() + sizeof(file_header), sizeof(uint32_t));
-
-		if (sprite_count == 0 || sprite_index >= sprite_count)
-			throw std::runtime_error("Invalid sprite index in encrypted fast path.");
-
-		auto entries_buf = read_and_decrypt_section(file, sizeof(file_header) + sizeof(uint32_t),
-			sprite_count * sizeof(sprite_entry), key);
-
-		std::vector<sprite_entry> entries(sprite_count);
-		std::memcpy(entries.data(), entries_buf.data(), entries_buf.size());
-
-		const auto& entry = entries[sprite_index];
-		auto sprite_data = read_and_decrypt_section(file, entry.offset, entry.size, key);
-
-		std::istringstream ss(std::string(reinterpret_cast<char*>(sprite_data.data()), sprite_data.size()), std::ios::binary);
-
-		sprite sprite_obj{};
-		ss.seekg(SPRITE_HEADER_SKIP, std::ios::beg);
-
-		uint32_t rect_count = 0;
-		ss.read(reinterpret_cast<char*>(&rect_count), sizeof(uint32_t));
-
-		sprite_obj.sprite_rectangles.resize(rect_count);
-		ss.read(reinterpret_cast<char*>(sprite_obj.sprite_rectangles.data()), rect_count * sizeof(sprite_rect));
-		ss.seekg(PADDING_SIZE, std::ios::cur);
-
-		const long image_size = entry.size -
-			(SPRITE_HEADER_SKIP + (rect_count * sizeof(sprite_rect)) + RECT_COUNT_SIZE + PADDING_SIZE);
-		sprite_obj.image_data.resize(image_size);
-		ss.read(reinterpret_cast<char*>(sprite_obj.image_data.data()), image_size);
 
 		return sprite_obj;
 	}
