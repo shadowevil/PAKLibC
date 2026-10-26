@@ -83,6 +83,7 @@ TEST_CASE("Layout: the 80 sprite-header padding bytes are not checked") {
 	for (size_t i = 0; i < 80; ++i)
 		layout.data[layout.sprite_offsets[1] + 20 + i] = static_cast<uint8_t>(0xA0 + (i % 16));
 	const std::string path = fixture::write("layout_padding.pak", layout.data);
-	CHECK(PAKLib::loadpak(path).sprites.size() == 2);
-	CHECK_NOTHROW(PAKLib::get_sprite(path, 1));
+	for (const fixture::full_loader& loader : fixture::strict_loaders())
+		CHECK(loader.load(path).sprites.size() == 2);
+	CHECK_NOTHROW(PAKLib::get_sprite_fast(path, 1));
 }

@@ -1,0 +1,6 @@
+# The corpus inputs are raw bytes (some contain no NUL and would otherwise be taken for text and converted)
+cases/** binary
+# Generated reports: compared line for line, kept as written (LF)
+expected.txt text eol=lf
+deviations.txt text eol=lf
+cases.txt text eol=lf

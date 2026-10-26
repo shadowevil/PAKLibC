@@ -15,13 +15,28 @@
     <ClCompile Include="TestsColorKey.cpp">
       <Filter>Tests</Filter>
     </ClCompile>
+    <ClCompile Include="TestsImage.cpp">
+      <Filter>Tests</Filter>
+    </ClCompile>
     <ClCompile Include="TestsLayout.cpp">
       <Filter>Tests</Filter>
     </ClCompile>
     <ClCompile Include="TestsRealFile.cpp">
       <Filter>Tests</Filter>
     </ClCompile>
+    <ClCompile Include="TestsParity.cpp">
+      <Filter>Tests</Filter>
+    </ClCompile>
+    <ClCompile Include="TestsRepair.cpp">
+      <Filter>Tests</Filter>
+    </ClCompile>
+    <ClCompile Include="TestsStrings.cpp">
+      <Filter>Tests</Filter>
+    </ClCompile>
     <ClCompile Include="TestsValidation.cpp">
+      <Filter>Tests</Filter>
+    </ClCompile>
+    <ClCompile Include="TestsWrite.cpp">
       <Filter>Tests</Filter>
     </ClCompile>
   </ItemGroup>
@@ -31,6 +46,12 @@
     </ClInclude>
     <ClInclude Include="TestFramework.h">
       <Filter>Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="Parity\ParityReport.h">
+      <Filter>Framework</Filter>
+    </ClInclude>
+    <ClInclude Include="ZlibVectors.h">
+      <Filter>Tests</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

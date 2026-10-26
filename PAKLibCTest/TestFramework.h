@@ -76,6 +76,45 @@ namespace test {
 		if (!thrown_) test::fail(__FILE__, __LINE__, "expected exception from: " #expr); \
 	} while (0)
 
+// Expects expr to throw exactly-catchable `type` whose what() equals message (full text)
+#define CHECK_THROWS_AS(expr, type, message) \
+	do { \
+		bool thrown_ = false; \
+		try { (void)(expr); } \
+		catch (const type& ex_) { \
+			thrown_ = true; \
+			if (std::string(ex_.what()) != std::string(message)) \
+				test::fail(__FILE__, __LINE__, std::string("wrong message: '") + ex_.what() + "', expected '" + (message) + "'"); \
+		} \
+		catch (const std::exception& ex_) { \
+			thrown_ = true; \
+			test::fail(__FILE__, __LINE__, std::string("wrong exception type (expected " #type "): ") + ex_.what()); \
+		} \
+		if (!thrown_) test::fail(__FILE__, __LINE__, "expected exception from: " #expr); \
+	} while (0)
+
+// Like CHECK_THROWS_AS, but fails when the exception is the more derived `excluded` type
+// (e.g. a plain std::runtime_error that must not be an invalid_data_error)
+#define CHECK_THROWS_EXACT(expr, type, excluded, message) \
+	do { \
+		bool thrown_ = false; \
+		try { (void)(expr); } \
+		catch (const excluded& ex_) { \
+			thrown_ = true; \
+			test::fail(__FILE__, __LINE__, std::string("wrong exception type (got " #excluded ", expected " #type "): ") + ex_.what()); \
+		} \
+		catch (const type& ex_) { \
+			thrown_ = true; \
+			if (std::string(ex_.what()) != std::string(message)) \
+				test::fail(__FILE__, __LINE__, std::string("wrong message: '") + ex_.what() + "', expected '" + (message) + "'"); \
+		} \
+		catch (const std::exception& ex_) { \
+			thrown_ = true; \
+			test::fail(__FILE__, __LINE__, std::string("wrong exception type (expected " #type "): ") + ex_.what()); \
+		} \
+		if (!thrown_) test::fail(__FILE__, __LINE__, "expected exception from: " #expr); \
+	} while (0)
+
 #define CHECK_NOTHROW(expr) \
 	do { \
 		try { (void)(expr); } \

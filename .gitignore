@@ -365,5 +365,7 @@ FodyWeavers.xsd
 # PAKLibCTest fixtures written by the test scenarios
 PAKLibCTest/Build/TestOutput/
 
-# Local Claude Code tooling (hooks, settings, scratch); not part of the library
+# Local Claude Code files (hooks, settings, scratch, CLAUDE.md); never part of the repo
 .claude/
+CLAUDE.md
+CLAUDE.local.md

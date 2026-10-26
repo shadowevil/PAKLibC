@@ -5,10 +5,23 @@
 // Exit code is 0 when every check passed, 1 when any failed or the filter matched no test case.
 #include "TestFramework.h"
 #include <cstdio>
+#include <cstdlib>
 #include <string>
+#if defined(_MSC_VER) && defined(_DEBUG)
+#include <crtdbg.h>
+#endif
 
 int main(int argc, char** argv)
 {
+#if defined(_MSC_VER) && defined(_DEBUG)
+	// Debug assertions print to stderr and abort with a non-zero exit instead of opening a dialog
+	_CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+	_CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+	_CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+	_CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+	_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
+
 	if (argc > 1)
 		test::data_dir() = argv[1];
 	const std::string filter = argc > 2 ? argv[2] : "";

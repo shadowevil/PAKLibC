@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Parity harness: compiles PAKLib's own sources (by relative path, read-only) so internals such as
+       SpriteImage.Decode are reachable, and writes the reference report for the parity corpus.
+       .NET 8 is the reference runtime (its zlib behaviour is what PAKLibC reproduces).
+       Build: dotnet build PAKLibCTest\Parity\harness -c Release artifacts-path outside the tree (see ..\README.md). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>CS8632;CS8618;CS8600;CS8601;CS8602;CS8603;CS8604;CS8625</NoWarn>
+    <PAKLibSource>$(MSBuildThisFileDirectory)..\..\..\..\PAKLib\PAKLib</PAKLibSource>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="$(PAKLibSource)\*.cs" />
+    <Compile Include="$(PAKLibSource)\Headers\*.cs" />
+  </ItemGroup>
+</Project>

@@ -31,7 +31,9 @@ TEST_CASE("Amp.pak: original 00 00 00 00 colour keys read as unset") {
 TEST_CASE("Amp.pak: every loader returns the same sprites as loadpak") {
 	const std::string path = fixture::amp_pak();
 	const PAKLib::pak reference = PAKLib::loadpak(path);
-	for (const fixture::full_loader& loader : fixture::full_loaders()) {
+	std::vector<fixture::full_loader> loaders = fixture::full_loaders();
+	loaders.push_back(fixture::strict_loaders()[1]);
+	for (const fixture::full_loader& loader : loaders) {
 		const PAKLib::pak other = loader.load(path);
 		REQUIRE(other.sprites.size() == reference.sprites.size());
 		for (size_t i = 0; i < reference.sprites.size(); ++i)
@@ -54,39 +56,55 @@ TEST_CASE("Amp.pak: table entries tile the file from the end of the table to the
 	CHECK(entries.back().offset + entries.back().size == fixture::read(path).size());
 }
 
-TEST_CASE("Paths: a relative path is opened and stored exactly as given") {
+namespace {
+	// Every reader opens `path` and returns the same sprites as `reference`
+	void check_path_loads(const std::string& path, const PAKLib::pak& reference) {
+		for (const fixture::full_loader& loader : fixture::full_loaders()) {
+			const PAKLib::pak pak_file = loader.load(path);
+			REQUIRE(pak_file.sprites.size() == reference.sprites.size());
+			for (size_t i = 0; i < reference.sprites.size(); ++i)
+				CHECK(fixture::same_sprite(pak_file.sprites[i], reference.sprites[i]));
+		}
+		for (const fixture::sprite_loader& loader : fixture::sprite_loaders()) {
+			CHECK(fixture::same_sprite(loader.load(path, 0), reference.sprites[0]));
+			CHECK(fixture::same_sprite(loader.load(path, 39), reference.sprites[39]));
+		}
+	}
+}
+
+TEST_CASE("Paths: a relative path loads the same sprites as the absolute path") {
 	const std::string relative = fixture::amp_pak();
 	if (fixture::is_absolute(relative)) {
 		std::printf("    note: data_dir is absolute, so the relative-path scenario is skipped\n");
 		return;
 	}
-	for (const fixture::full_loader& loader : fixture::full_loaders()) {
-		const PAKLib::pak pak_file = loader.load(relative);
-		CHECK(pak_file.pak_file_path == relative);
-		CHECK(pak_file.sprites.size() == 40);
-	}
-	CHECK_NOTHROW(PAKLib::get_sprite(relative, 0));
-	CHECK_NOTHROW(PAKLib::get_sprite_fast(relative, 0));
+	const PAKLib::pak reference = PAKLib::loadpak(fixture::absolute(relative));
+	REQUIRE(reference.sprites.size() == 40);
+	check_path_loads(relative, reference);
+	check_path_loads("./" + relative, reference);
 }
 
-TEST_CASE("Paths: an absolute path is opened and stored exactly as given") {
+TEST_CASE("Paths: an absolute path loads all 40 sprites") {
 	const std::string absolute = fixture::absolute(fixture::amp_pak());
-	for (const fixture::full_loader& loader : fixture::full_loaders()) {
-		const PAKLib::pak pak_file = loader.load(absolute);
-		CHECK(pak_file.pak_file_path == absolute);
-		CHECK(pak_file.sprites.size() == 40);
-	}
-	CHECK_NOTHROW(PAKLib::get_sprite(absolute, 39));
-	CHECK_NOTHROW(PAKLib::get_sprite_fast(absolute, 39));
+	REQUIRE(fixture::is_absolute(absolute));
+	const PAKLib::pak reference = PAKLib::loadpak(fixture::amp_pak());
+	REQUIRE(reference.sprites.size() == 40);
+	check_path_loads(absolute, reference);
 }
 
-TEST_CASE("Paths: forward and back slashes both work") {
-	std::string backslashed = fixture::amp_pak();
+TEST_CASE("Paths: forward and back slashes load the same sprites") {
+	const PAKLib::pak reference = PAKLib::loadpak(fixture::amp_pak());
+	REQUIRE(reference.sprites.size() == 40);
+	std::string backslashed = fixture::absolute(fixture::amp_pak());
 	for (char& ch : backslashed)
 		if (ch == '/')
 			ch = '\\';
+	std::string forward = backslashed;
+	for (char& ch : forward)
+		if (ch == '\\')
+			ch = '/';
 #if defined(_WIN32)
-	CHECK(PAKLib::loadpak(backslashed).sprites.size() == 40);
+	check_path_loads(backslashed, reference);
 #endif
-	CHECK(PAKLib::loadpak(fixture::amp_pak()).sprites.size() == 40);
+	check_path_loads(forward, reference);
 }

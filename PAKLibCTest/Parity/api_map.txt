@@ -1,0 +1,96 @@
+# PAKLib (C#) public API -> PAKLibC (namespace PAKLib, PAKLibC\PAK.h). One line per public type and member;
+# check_api.py fails on anything unmapped, stale or naming a C++ name PAK.h lacks. Overloads: Member(n) = n params.
+# "(none)" marks a member with no C++ counterpart, with the reason. "extra:" lines are the allowed C++-only API.
+
+PAK                                  -> pak (PAK and PAKData are one struct)
+PAK.ctor                             -> pak::pak() (value-initialised: pak{})
+PAK.Data                             -> (none) the pak itself holds the data
+PAK.ReadFromFile                     -> loadpak(path)
+PAK.SaveToFile                       -> save_to_file(pak, path)
+PAK.RepairFile                       -> repair_file(input, output, force)
+
+PAKData                              -> pak
+PAKData.ctor                         -> pak::pak() (value-initialised: pak{})
+PAKData.Read                         -> pak::read(bytes)
+PAKData.ToBytes                      -> pak::to_bytes()
+PAKData.Write                        -> pak::write(path)
+PAKData.ConvertImages                -> pak::convert_images(format)
+PAKData.Sprites                      -> pak::sprites
+PAKData.SpriteCount                  -> pak::sprites.size() (pak::sprite_count is the count as read, an extra)
+PAKData.SpriteEntryLengthOffsets     -> pak::sprite_entries (sprite_entry::offset, sprite_entry::size)
+
+Sprite                               -> sprite
+Sprite.Rectangles                    -> sprite::sprite_rectangles
+Sprite.data                          -> sprite::image_data
+Sprite.ColorKey                      -> sprite::get_color_key() / sprite::set_color_key(value) / sprite::has_color_key() (0 = null)
+Sprite.ColorKeyR                     -> sprite::color_key_r() (0 when none)
+Sprite.ColorKeyG                     -> sprite::color_key_g() (0 when none)
+Sprite.ColorKeyB                     -> sprite::color_key_b() (0 when none)
+Sprite.SetColorKey                   -> sprite::set_color_key(r, g, b)
+Sprite.ClearColorKey                 -> sprite::clear_color_key()
+Sprite.ImageFormat                   -> sprite::image_format()
+Sprite.ConvertToBmp                  -> sprite::convert_to_bmp()
+Sprite.ConvertToPng                  -> sprite::convert_to_png()
+
+SpriteRectangle                      -> sprite_rect
+SpriteRectangle.x                    -> sprite_rect::x
+SpriteRectangle.y                    -> sprite_rect::y
+SpriteRectangle.width                -> sprite_rect::width
+SpriteRectangle.height               -> sprite_rect::height
+SpriteRectangle.pivotX               -> sprite_rect::pivotX
+SpriteRectangle.pivotY               -> sprite_rect::pivotY
+SpriteRectangle.Size                 -> (none) sizeof(sprite_rect), 12; a packed struct needs no method
+
+FileHeader                           -> file_header
+FileHeader.ctor                      -> file_header::file_header() (value-initialised: file_header{})
+FileHeader.Default                   -> file_header_signature, copied into file_header::signature (pak::to_bytes writes it)
+FileHeader.Magic                     -> file_header::signature (17 bytes, not NUL-terminated)
+FileHeader.Padding                   -> file_header::padding (3 bytes)
+SpriteHeader                         -> sprite_header
+SpriteHeader.ctor                    -> sprite_header::sprite_header() (value-initialised: sprite_header{})
+SpriteHeader.Default                 -> sprite_header_signature, copied into sprite_header::signature (pak::to_bytes writes it)
+SpriteHeader.Magic                   -> sprite_header::signature (20 bytes, not NUL-terminated)
+SpriteHeader.Padding                 -> sprite_header::padding (80 bytes)
+
+SpriteImageFormat                    -> sprite_image_format
+SpriteImageFormat.Unknown            -> sprite_image_format::unknown
+SpriteImageFormat.Bmp                -> sprite_image_format::bmp
+SpriteImageFormat.Png                -> sprite_image_format::png
+
+SpriteImage                          -> sprite_image (namespace)
+SpriteImage.DefaultColorKey          -> sprite_image::default_color_key
+SpriteImage.MaxDimension             -> sprite_image::max_dimension
+SpriteImage.GetFormat                -> sprite_image::get_format(data)
+SpriteImage.TryGetSize               -> sprite_image::try_get_size(data, width, height)
+SpriteImage.CheckSize                -> sprite_image::check_size(data)
+SpriteImage.GetBmpBitsPerPixel       -> sprite_image::get_bmp_bits_per_pixel(data)
+SpriteImage.ToBmp24                  -> sprite_image::to_bmp24(data, color_key) (0 = null)
+SpriteImage.ToPng                    -> sprite_image::to_png(data, color_key) (0 = null)
+
+PAKRepair                            -> pak_repair (namespace)
+PAKRepair.Repair(2)                  -> pak_repair::repair(bytes, force)
+PAKRepair.Repair(4)                  -> pak_repair::repair(bytes, start, end, force)
+PAKRepairReport                      -> repair_report
+PAKRepairReport.Data                 -> repair_report::data
+PAKRepairReport.Issues               -> repair_report::issues
+PAKRepairReport.PlaceholderSprites   -> repair_report::placeholder_sprites
+PAKRepairReport.Success              -> repair_report::success()
+PAKRepairIssue                       -> repair_issue
+PAKRepairIssue.SpriteIndex           -> repair_issue::sprite_index (-1 = null)
+PAKRepairIssue.Offset                -> repair_issue::offset
+PAKRepairIssue.Description           -> repair_issue::description
+PAKRepairIssue.Repaired              -> repair_issue::repaired
+PAKRepairIssue.ToString              -> repair_issue::to_string()
+
+BinaryReaderExtensions               -> (none) C++ has no BinaryReader; the readers use PAKLib::detail helpers
+BinaryReaderExtensions.PeekBytes     -> (none) see BinaryReaderExtensions
+BinaryReaderExtensions.SkipBytes     -> (none) see BinaryReaderExtensions
+BinaryReaderExtensions.EndOfStream   -> (none) see BinaryReaderExtensions
+
+# Allowed C++-only API (rulings: the fast readers and get_sprite; R2: the headers and the count as read)
+extra: get_sprite(path, index)       one sprite with PAK.ReadFromFile's path checks and PAKData.Read's per-sprite checks
+extra: loadpak_fast(path)            lenient reader: no path, magic or image checks; the same count and bounds rules
+extra: get_sprite_fast(path, index)  lenient single sprite: as loadpak_fast, plus the index check
+extra: pak::header                   the file header as read
+extra: pak::sprite_count             the sprite count as read
+extra: sprite::header                each sprite's 100-byte header as read
