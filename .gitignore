@@ -361,3 +361,9 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# PAKLibCTest fixtures written by the test scenarios
+PAKLibCTest/Build/TestOutput/
+
+# Local Claude Code tooling (hooks, settings, scratch); not part of the library
+.claude/
